@@ -1,0 +1,212 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.Global.bProcessed.Declare(Boolean,False)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sCompCode.Declare(String)
+V.Local.i.Declare(Float)
+V.Local.sParams.Declare(String)
+'Coded by SFF
+'3/15/2015
+
+'company code
+F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+'common
+F.ODBC.Connection!conC.OpenConnection(V.Ambient.Ccon,V.Ambient.Cuser,V.Ambient.Cpass)
+
+'get order all order lines
+F.Intrinsic.Control.CallSub(Getorderlines)
+
+'Loop through company codes and import order lines
+f.Global.General.GetCompanyCodes(v.Local.sCompCode)
+F.Intrinsic.String.Split(V.Local.sCompCode,"*!*",V.Local.sCompCode)
+F.Intrinsic.Control.For(V.Local.i,V.Local.sCompCode.LBound,V.Local.sCompCode.UBound,1)
+	F.Intrinsic.String.Build("{0}!*!ORDUPL",V.Local.sCompCode(V.Local.i).Trim,V.Local.sParams)
+	F.Global.General.CallWrapperSync(51,V.Local.sParams)
+F.Intrinsic.Control.Next(V.Local.i)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3999_WEB_IMPORT_BY_COMPCODE.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.GetOrderLines.Start
+F.Intrinsic.Control.SetErrorHandler("GetOrderLines_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+'load text file with order lines for all company codes
+'read the line position 928 first three characters should be company code.
+'call subroutine to save order line passing company code to open the directory and append to the active text file.
+
+'GENERIC FILENAME "ORDERS" has to be the file name of the txt file that gets put in the generic directory.
+'After creating the company specific files delete the generic file containing all of the order lines that are processed
+
+'if company code is not in the position 928, then create error file to put in central directory
+
+V.Local.sFile.Declare(String)
+V.Local.sOrders.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.i.Declare(Float)
+V.Local.bExists.Declare(Boolean)
+V.Local.iHandle.Declare(Long)
+V.Local.sTemp$.Declare(String)
+V.Local.iLine.Declare(Long)
+V.Local.sCCC.Declare(String)
+V.Local.sCompanies.Declare(String)
+V.Local.sErrorLines.Declare(String)
+V.Local.i2.Declare(Long)
+V.Local.sDate.Declare(String)
+V.Local.sRec.Declare(String)
+V.Local.sSender.Declare(String)
+V.Local.sBody.Declare(String)
+
+'Get Company List
+f.Global.General.getcompanycodes(v.Local.sCompanies)
+F.Intrinsic.String.Split(V.Local.sCompanies,"*!*",V.Local.sCompanies)
+
+F.Intrinsic.String.Build("{0}\WEB_ORDERS\*.txt",V.Caller.FilesDir,V.Local.sFile)
+
+Function.Intrinsic.File.GetFileList(V.Local.sFile,0,Variable.Local.sTemp$)
+F.Intrinsic.Control.If(V.Local.sTemp$.Trim,=,"")
+	'exit if no results for txt files
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+'for each .txt file in the directory continue processing
+F.Intrinsic.String.Split(V.Local.sTemp$,":",V.Local.sTemp$)
+F.Intrinsic.Control.For(V.Local.i,V.Local.sTemp$.LBound,V.Local.sTemp$.UBound,1)
+	F.Intrinsic.String.Build("{0}\WEB_ORDERS\{1}",V.Caller.FilesDir,V.Local.sTemp$(v.Local.i).Trim,V.Local.sFile)
+	'File to string array
+	F.Intrinsic.File.fileToStringArray(v.Local.sFile,v.Ambient.NewLine,v.Local.sOrders)
+	F.Intrinsic.Control.For(V.Local.iLine,V.Local.sOrders.LBound,V.Local.sOrders.UBound,1)
+		'Reset bProcessed flag
+		V.Global.bProcessed.Set(False)
+		F.Intrinsic.String.Split(V.Local.sOrders(v.Local.iLine),V.Ambient.NewLine,V.Local.sLine)
+		'Read Position 928
+		F.Intrinsic.String.Mid(V.Local.sLine,928,30,V.Local.sCCC)
+		F.Intrinsic.String.Left(V.Local.sCCC.Trim,3,V.Local.sCCC)
+		F.Intrinsic.Control.If(V.Local.sCCC.Trim,<>,"")
+			'Loop through company list to make sure it is valid company, else write line to error file
+			F.Intrinsic.Control.For(V.Local.i2,V.Local.sCompanies.LBound,V.Local.sCompanies.UBound,1)
+				F.Intrinsic.Control.If(V.Local.sCCC,=,V.Local.sCompanies(v.Local.i2))
+					'Save to File Directory for that company code
+					F.Intrinsic.Control.CallSub(Saveorderline,"sLine",V.Local.sLine,"Comp",V.Local.sCCC)
+				F.Intrinsic.Control.Endif
+			F.Intrinsic.Control.Next(V.Local.i2)
+		F.Intrinsic.Control.EndIf
+		'if bProcessed = False then Write Error Log
+		F.Intrinsic.Control.If(V.Global.bProcessed,=,False)
+			'Append to Error Log String if not processed
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sErrorLines,V.Local.sLine,V.Ambient.NewLine,V.Local.sErrorLines)
+		F.Intrinsic.Control.EndIf
+	'Go to next line in file
+	F.Intrinsic.Control.Next(V.Local.iLine)
+'delete that file so it does not process with the general GSSPARAM settings if they are still set
+F.Intrinsic.File.DeleteFile(V.Local.sFile)
+'go to next .txt file
+F.Intrinsic.Control.Next(V.Local.i)
+
+'Get Error File Unique Characteristics "Date_Time_ORDERS.txt"
+F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYYYY",V.Local.sdate)
+V.Local.sTemp$.Set(V.Ambient.Time)
+F.Intrinsic.String.StripCharacters(V.Local.sTemp$,V.Local.sTemp$)
+'Write lines that did not process to Error File
+F.Intrinsic.Control.If(V.Local.sErrorLines.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}\WEB_ORDERS\WEB_ERRORS\{1}_{2}_ORDERS.txt",V.Caller.FilesDir,V.Local.sdate,V.Local.sTemp$,V.Local.sFile)
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sErrorLines)
+
+	'Get To and From Emails from cfg file
+	F.Intrinsic.String.Build("{0}\WEB_ORDERS\EmailError.cfg",V.Caller.FilesDir,V.Local.sTemp$)
+	f.Intrinsic.File.fileToStringArray(v.Local.sTemp$,v.Ambient.NewLine,v.Local.sTemp$)
+	F.Intrinsic.Control.For(V.Local.i,V.Local.sTemp$.LBound,V.Local.sTemp$.UBound,1)
+		F.Intrinsic.String.Split(V.Local.sTemp$(v.Local.i),":",V.Local.sLine)
+		F.Intrinsic.Control.If(V.Local.sLine(0).Trim,=,"Recipient")
+			V.Local.sRec.Set(V.Local.sLine(1).Trim)
+		F.Intrinsic.Control.ElseIf(V.Local.sLine(0).Trim,=,"Sender")
+			V.Local.sSender.Set(V.Local.sLine(1).Trim)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.i)
+	'Build Body
+	F.Intrinsic.String.Build(" Order Lines did not process, Invalid Company Codes Found in User 3 Field or File Directory For Company Code does NOT exist, Order Lines are attached and also stored in the loaction below:{1} {0}",V.Local.sFile,V.Ambient.NewLine,V.Local.sBody)
+	'Send Message
+	F.Global.Messaging.CreateEMmessage(V.Local.sRec,"",V.Local.sSender,"","Error Processing Web Importer File",V.Local.sBody,V.Local.sFile,False)
+
+F.Intrinsic.Control.EndIf
+
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("GetOrderLines_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3999_WEB_IMPORT_BY_COMPCODE.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.GetOrderLines.End
+
+Program.Sub.SaveOrderLine.Start
+F.Intrinsic.Control.SetErrorHandler("SaveOrderLine_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sFile.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.iHandle.Declare(Long)
+
+F.Intrinsic.String.Build("{0}\{1}\WEB_ORDERS",V.Caller.FilesDir,V.Args.Comp,V.Local.sFile)
+F.Intrinsic.File.DirExists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,False)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Build("{0}\{1}\WEB_ORDERS\ORDERS.txt",V.Caller.FilesDir,V.Args.Comp,V.Local.sFile)
+
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,True)
+'	F.Intrinsic.File.GetHandle(V.Local.iHandle)
+'	F.Intrinsic.File.OpenForAppend(V.Local.sFile,V.Local.iHandle)
+	F.Intrinsic.File.Append2FileNewLine(V.Local.sFile,V.Args.sLine)
+'	F.Intrinsic.File.CloseFile(V.Local.iHandle)
+F.Intrinsic.Control.Else
+	'Creat file and write line
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Args.sLine)
+F.Intrinsic.Control.EndIf
+
+V.Global.bProcessed.Set(True)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("SaveOrderLine_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3999_WEB_IMPORT_BY_COMPCODE.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.SaveOrderLine.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_WEB_IMPORT_BY_COMPCODE$}$SUPERVSR$}$3/26/2015
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$This program reads the WEB IMPORTER File and separates each line based on company code in postion 928 on each line, there will be a file created for each company code GSSPARAMccc.txt where ccc is the company code, the upload for web importer will run on the task scheduler within each company code and process the edited WEB IMPORTER File for that company.
+
+
+Program.Sub.Comments.End
+
